@@ -1,0 +1,14 @@
+# Ignoră mediul virtual
+venv/
+
+# Ignoră fișierele de cache Python
+__pycache__/
+
+# Ignoră fișierele de baze de date SQLite
+*.db
+*.db-journal
+
+# Ignoră fișierele specifice VS Code
+.vscode/
+
+Secret.txt
