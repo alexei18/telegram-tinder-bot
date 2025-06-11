@@ -143,6 +143,104 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     elif data == "close_menu":
         await query.edit_message_text("Meniul a fost închis.")
 
+    # === LOGICĂ NOUĂ PENTRU MATCHING ===
+    elif data.startswith("like_"):
+        await process_swipe(update, context, "like")
+
+    elif data.startswith("nope_"):
+        await process_swipe(update, context, "nope")
+
+    elif data.startswith("report_"):
+        reporter_id = query.from_user.id
+        reported_id = int(data.split("_")[1])
+        database.record_report(reporter_id, reported_id)
+        await query.edit_message_text("Raportul a fost trimis. Mulțumim! Acum căutăm următorul profil...")
+        # Căutăm imediat următorul profil
+        next_potential_match = database.find_potential_match(reporter_id)
+        if next_potential_match:
+            await show_profile_card(update, context, next_potential_match)
+        else:
+            await query.edit_message_text("Nu am mai găsit pe nimeni nou pentru tine. Revino mai târziu!")
+            
+    elif data == "stop_matching":
+        await query.edit_message_text("Procesul de matching a fost oprit.")
+
+
+
+
+
+# === SECȚIUNEA PENTRU MATCHING ===
+
+async def show_profile_card(update: Update, context: ContextTypes.DEFAULT_TYPE, profile_data):
+    """Formatează și afișează profilul unui potențial partener."""
+    profile_kinks = database.get_user_kinks(profile_data.user_id)
+    kinks_text = ", ".join(profile_kinks) if profile_kinks else "Nicio preferință specificată"
+
+    text = (
+        f"Găsit un potențial partener:\n\n"
+        f"👤 **Pseudonim:** {profile_data.nickname}\n"
+        f"🎂 **Vârstă:** {profile_data.age}\n"
+        f"✨ **Preferințe:** {kinks_text}"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("❤️ Like", callback_data=f"like_{profile_data.user_id}"),
+            InlineKeyboardButton("❌ Nope", callback_data=f"nope_{profile_data.user_id}")
+        ],
+        [InlineKeyboardButton("⚠️ Raportează", callback_data=f"report_{profile_data.user_id}")],
+        [InlineKeyboardButton("🚪 Oprește matching-ul", callback_data="stop_matching")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Dacă a fost chemat dintr-o comandă, trimite un mesaj nou.
+    # Dacă a fost chemat dintr-o apăsare de buton, editează mesajul existent.
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode='HTML')
+    else:
+        await update.message.reply_text(text=text, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def find_match_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Comanda care inițiază procesul de matching."""
+    user_id = update.effective_user.id
+    potential_match = database.find_potential_match(user_id)
+
+    if potential_match:
+        await show_profile_card(update, context, potential_match)
+    else:
+        await update.message.reply_text("Ne pare rău, nu am găsit pe nimeni nou pentru tine momentan. Încearcă mai târziu!")
+
+async def process_swipe(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str):
+    """Procesează o acțiune de 'like' sau 'nope'."""
+    query = update.callback_query
+    swiper_user = query.from_user
+    swiped_user_id = int(query.data.split("_")[1])
+
+    # 1. Înregistrăm acțiunea
+    database.record_swipe(swiper_id=swiper_user.id, swiped_id=swiped_user_id, action=action)
+    
+    # 2. Dacă a fost 'like', verificăm dacă e match reciproc
+    if action == 'like':
+        is_match = database.check_for_match(swiper_user.id, swiped_user_id)
+        if is_match:
+            # Notificăm ambii useri!
+            swiped_user_profile = database.get_user(swiped_user_id)
+            await context.bot.send_message(
+                chat_id=swiper_user.id,
+                text=f"🎉 Este un Match! Ai o potrivire cu {swiped_user_profile.nickname}."
+            )
+            await context.bot.send_message(
+                chat_id=swiped_user_id,
+                text=f"🎉 Este un Match! Ai o potrivire cu {swiper_user.first_name}."
+            )
+
+    # 3. Căutăm și afișăm următorul profil
+    next_potential_match = database.find_potential_match(swiper_user.id)
+    if next_potential_match:
+        await show_profile_card(update, context, next_potential_match)
+    else:
+        await query.edit_message_text("Nu am mai găsit pe nimeni nou pentru tine. Revino mai târziu!")
 
 def main() -> None:
     """Funcția principală care pornește bot-ul."""
@@ -163,6 +261,8 @@ def main() -> None:
 
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("preferinte", preferences_menu))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(CommandHandler("match", find_match_command))
     application.add_handler(CallbackQueryHandler(button_handler))
     print("Bot-ul a pornit și ascultă...")
     application.run_polling()
